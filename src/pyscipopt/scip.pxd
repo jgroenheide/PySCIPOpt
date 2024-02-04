@@ -842,8 +842,6 @@ cdef extern from "scip/scip.h":
     SCIP_RETCODE SCIPprintBestTransSol(SCIP* scip, FILE* outfile, SCIP_Bool printzeros)
     SCIP_RETCODE SCIPprintSol(SCIP* scip, SCIP_SOL* sol, FILE* outfile, SCIP_Bool printzeros)
     SCIP_RETCODE SCIPprintTransSol(SCIP* scip, SCIP_SOL* sol, FILE* outfile, SCIP_Bool printzeros)
-    SCIP_Real SCIPgetPrimalbound(SCIP* scip)
-    SCIP_Real SCIPgetGap(SCIP* scip)
     int SCIPgetDepth(SCIP* scip)
     SCIP_Bool SCIPhasPrimalRay(SCIP * scip)
     SCIP_Real SCIPgetPrimalRayVal(SCIP * scip, SCIP_VAR * var)
@@ -876,11 +874,10 @@ cdef extern from "scip/scip.h":
     SCIP_Real SCIPgetRowObjParallelism(SCIP* scip, SCIP_ROW* row)
 
     # Column Methods
+    int SCIPcolGetAge(SCIP_COL* col)
     SCIP_Real SCIPgetColRedcost(SCIP* scip, SCIP_COL* col)
 
     # Dual Solution Methods
-    SCIP_Real SCIPgetDualbound(SCIP* scip)
-    SCIP_Real SCIPgetDualboundRoot(SCIP* scip)
     SCIP_Real SCIPgetVarRedcost(SCIP* scip, SCIP_VAR* var)
     SCIP_RETCODE SCIPgetDualSolVal(SCIP* scip, SCIP_CONS* cons, SCIP_Real* dualsolval, SCIP_Bool* boundconstraint)
 
@@ -1274,7 +1271,17 @@ cdef extern from "scip/scip.h":
     SCIP_Longint SCIPgetNInfeasibleLeaves(SCIP* scip)
     SCIP_Longint SCIPgetNLPs(SCIP* scip)
     SCIP_Longint SCIPgetNLPIterations(SCIP* scip)
+    SCIP_Longint SCIPgetNNodeLPIterations(SCIP* scip)
+    SCIP_Longint SCIPgetNStrongbranchLPIterations(SCIP* scip)
     int SCIPgetNSepaRounds(SCIP* scip)
+    int SCIPgetMaxDepth(SCIP* scip)
+    SCIP_Real SCIPgetLowerbound(SCIP* scip)
+    SCIP_Real SCIPgetUpperbound(SCIP* scip)
+    SCIP_Real SCIPgetPrimalbound(SCIP* scip)
+    SCIP_Real SCIPgetDualbound(SCIP* scip)
+    SCIP_Real SCIPgetCutoffbound(SCIP* scip)
+    SCIP_Real SCIPgetDualboundRoot(SCIP* scip)
+    SCIP_Real SCIPgetGap(SCIP* scip)
 
     # Parameter Functions
     SCIP_RETCODE SCIPsetBoolParam(SCIP* scip, char* name, SCIP_Bool value)
@@ -1813,9 +1820,12 @@ cdef extern from "scip/pub_lp.h":
 
 cdef extern from "scip/scip_tree.h":
     SCIP_RETCODE SCIPgetOpenNodesData(SCIP* scip, SCIP_NODE*** leaves, SCIP_NODE*** children, SCIP_NODE*** siblings, int* nleaves, int* nchildren, int* nsiblings)
+    int SCIPgetPlungeDepth(SCIP* scip)
     SCIP_Longint SCIPgetNLeaves(SCIP* scip)
     SCIP_Longint SCIPgetNChildren(SCIP* scip)
     SCIP_Longint SCIPgetNSiblings(SCIP* scip)
+    SCIP_NODE* SCIPgetPrioChild(SCIP* scip)
+    SCIP_NODE* SCIPgetPrioSibling(SCIP* scip)
     SCIP_NODE* SCIPgetBestChild(SCIP* scip)
     SCIP_NODE* SCIPgetBestSibling(SCIP* scip)
     SCIP_NODE* SCIPgetBestLeaf(SCIP* scip)

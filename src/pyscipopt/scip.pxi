@@ -374,9 +374,11 @@ cdef class Column:
         """gets position of column in current LP, or -1 if it is not in LP"""
         return SCIPcolGetLPPos(self.scip_col)
 
-    def getBasisStatus(self):
+    def getBasisStatus(self, as_string=True):
         """gets the basis status of a column in the LP solution, Note: returns basis status `zero` for columns not in the current SCIP LP"""
         cdef SCIP_BASESTAT stat = SCIPcolGetBasisStatus(self.scip_col)
+        if not as_string:
+            return stat
         if stat == SCIP_BASESTAT_LOWER:
             return "lower"
         elif stat == SCIP_BASESTAT_BASIC:
@@ -409,9 +411,18 @@ cdef class Column:
         """gets upper bound of column"""
         return SCIPcolGetUb(self.scip_col)
 
+    # Why does this function name have Coeff after it, when that's nowhere else the case?
     def getObjCoeff(self):
         """gets objective value coefficient of a column"""
         return SCIPcolGetObj(self.scip_col)
+
+    def getObj(self):
+        """gets objective value coefficient of a column"""
+        return SCIPcolGetObj(self.scip_col)
+
+    def getAge(self):
+        """gets the age of a column, i.e., the total number of successive times a column was in the LP and was 0.0 in the solution"""
+        return SCIPcolGetAge(self.scip_col)
 
     def __hash__(self):
         return hash(<size_t>self.scip_col)
@@ -452,9 +463,11 @@ cdef class Row:
         """gets position of row in current LP, or -1 if it is not in LP"""
         return SCIProwGetLPPos(self.scip_row)
 
-    def getBasisStatus(self):
+    def getBasisStatus(self, as_string=True):
         """gets the basis status of a row in the LP solution, Note: returns basis status `basic` for rows not in the current SCIP LP"""
         cdef SCIP_BASESTAT stat = SCIProwGetBasisStatus(self.scip_row)
+        if not as_string:
+            return stat
         if stat == SCIP_BASESTAT_LOWER:
             return "lower"
         elif stat == SCIP_BASESTAT_BASIC:
@@ -517,6 +530,14 @@ cdef class Row:
     def getNorm(self):
         """gets Euclidean norm of row vector """
         return SCIProwGetNorm(self.scip_row)
+
+    def getDualsol(self):
+        """gets the dual LP solution of a row"""
+        return SCIProwGetDualsol(self.scip_row)
+
+    def getAge(self):
+        """gets age of row"""
+        return SCIProwGetAge(self.scip_row)
 
     def __hash__(self):
         return hash(<size_t>self.scip_row)
@@ -834,6 +855,10 @@ cdef class Variable(Expr):
         elif vartype == SCIP_VARTYPE_IMPLINT:
             return "IMPLINT"
 
+    def getType(self):
+        """Retrieve the variable's type (BINARY:0, INTEGER:1, IMPLINT:2 or CONTINUOUS:3)"""
+        return SCIPvarGetType(self.scip_var)
+
     def isOriginal(self):
         """Retrieve whether the variable belongs to the original problem"""
         return SCIPvarIsOriginal(self.scip_var)
@@ -884,6 +909,10 @@ cdef class Variable(Expr):
     def getLPSol(self):
         """Retrieve the current LP solution value of variable"""
         return SCIPvarGetLPSol(self.scip_var)
+
+    def getAvgSol(self):
+        """Retrieve a weighted average solution value of the variable in all feasible primal solutions found so far"""
+        return SCIPvarGetAvgSol(self.scip_var)
 
 cdef class Constraint:
     """Base class holding a pointer to corresponding SCIP_CONS"""
@@ -1154,6 +1183,14 @@ cdef class Model:
         """Retrieve the total number of LP iterations so far."""
         return SCIPgetNLPIterations(self._scip)
 
+    def getNNodeLPIterations(self):
+        """gets total number of simplex iterations used so far for node relaxations"""
+        return SCIPgetNNodeLPIterations(self._scip)
+
+    def getNStrongbranchLPIterations(self):
+        """gets total number of simplex iterations used so far in strong branching"""
+        return SCIPgetNStrongbranchLPIterations(self._scip)
+
     def getNNodes(self):
         """gets number of processed nodes in current run, including the focus node."""
         return SCIPgetNNodes(self._scip)
@@ -1194,6 +1231,14 @@ cdef class Model:
         """Retrieve the depth of the current node"""
         return SCIPgetDepth(self._scip)
 
+    def getMaxDepth(self):
+        """gets maximal depth of all processed nodes in current branch and bound run (excluding probing nodes)"""
+        return SCIPgetMaxDepth(self._scip)
+
+    def getPlungeDepth(self):
+        """gets current plunging depth (successive times, a child was selected as next node)"""
+        return SCIPgetPlungeDepth(self._scip)
+
     def infinity(self):
         """Retrieve SCIP's infinity value"""
         return SCIPinfinity(self._scip)
@@ -1213,6 +1258,14 @@ cdef class Model:
     def frac(self, value):
         """returns fractional part of value, i.e. x - floor(x) in epsilon tolerance: x - floor(x+eps)"""
         return SCIPfrac(self._scip, value)
+
+    def isPositive(self, value):
+        """return whether value > eps"""
+        return SCIPisPositive(self._scip, value)
+
+    def isNegative(self, value):
+        """return whether value < -eps"""
+        return SCIPisNegative(self._scip, value)
 
     def isZero(self, value):
         """returns whether abs(value) < eps"""
@@ -1308,6 +1361,10 @@ cdef class Model:
     def getObjlimit(self):
         """returns current limit on objective function."""
         return SCIPgetObjlimit(self._scip)
+
+    def getObjNorm(self):
+        """returns the Euclidean norm of the objective function vector (available only for transformed problem)"""
+        return SCIPgetObjNorm(self._scip)
 
     def setObjective(self, coeffs, sense = 'minimize', clear = 'true'):
         """Establish the objective function as a linear expression.
@@ -1803,6 +1860,14 @@ cdef class Model:
             self.chgVarType(var, "C")
 
     # Node methods
+    def getPrioChild(self):
+        """gets the best child of the focus node w.r.t. the node selection priority assigned by the branching rule"""
+        return Node.create(SCIPgetPrioChild(self._scip))
+
+    def getPrioSibling(self):
+        """gets the best sibling of the focus node w.r.t. the node selection priority assigned by the branching rule"""
+        return Node.create(SCIPgetPrioSibling(self._scip))
+
     def getBestChild(self):
         """gets the best child of the focus node w.r.t. the node selection strategy."""
         return Node.create(SCIPgetBestChild(self._scip))
@@ -1870,6 +1935,7 @@ cdef class Model:
 
         return SCIPgetLPObjval(self._scip)
 
+    # This is the functionality of getLPCols and getLPRows, not the Data version
     def getLPColsData(self):
         """Retrieve current LP columns"""
         cdef SCIP_COL** cols
@@ -1893,6 +1959,14 @@ cdef class Model:
     def getNLPCols(self):
         """Retrieve the number of cols currently in the LP"""
         return SCIPgetNLPCols(self._scip)
+
+    def getLPRows(self):
+        """Retrieve current LP rows"""
+        return self.getLPRowsData()
+
+    def getLPCols(self):
+        """Retrieve current LP columns"""
+        return self.getLPColsData()
 
     def getLPBasisInd(self):
         """Gets all indices of basic columns and rows: index i >= 0 corresponds to column i, index i < 0 to row -i-1"""
@@ -2013,6 +2087,7 @@ cdef class Model:
         101 in this case is an 'e' (euclidean) in ASCII. The other accpetable input is 100 (d for discrete)."""
         return SCIProwGetParallelism(row1.scip_row, row2.scip_row, orthofunc)
 
+    # I don't think this function should be here...
     def getRowDualSol(self, Row row):
         """Gets the dual LP solution of a row"""
         return SCIProwGetDualsol(row.scip_row)
@@ -3338,6 +3413,14 @@ cdef class Model:
             return SCIPgetDualfarkasLinear(self._scip, transcons.scip_cons)
         else:
             return SCIPgetDualfarkasLinear(self._scip, cons.scip_cons)
+
+    def getColRedcost(self, Column col):
+        """Retrieve the reduced costs of a column in the last (feasible) LP
+        
+        :param Column col: column to get the reduced cost of
+        
+        """
+        return SCIPgetColRedcost(self._scip, col.scip_col)
 
     def getVarRedcost(self, Variable var):
         """Retrieve the reduced cost of a variable.
@@ -4700,6 +4783,14 @@ cdef class Model:
 
         return ray
 
+    def getLowerbound(self):
+        """gets global lower (dual) bound in transformed problem"""
+        return SCIPgetLowerbound(self._scip)
+
+    def getUpperbound(self):
+        """gets global upper (primal) bound in transformed problem (objective value of best solution or user objective limit)"""
+        return SCIPgetUpperbound(self._scip)
+
     def getPrimalbound(self):
         """Retrieve the best primal bound."""
         return SCIPgetPrimalbound(self._scip)
@@ -4707,6 +4798,10 @@ cdef class Model:
     def getDualbound(self):
         """Retrieve the best dual bound."""
         return SCIPgetDualbound(self._scip)
+
+    def getCutoffbound(self):
+        """Retrieve the global cutoff bound in transformed problem"""
+        return SCIPgetCutoffbound(self._scip)
 
     def getDualboundRoot(self):
         """Retrieve the best root dual bound."""
