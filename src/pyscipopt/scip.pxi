@@ -910,9 +910,19 @@ cdef class Variable(Expr):
         """Retrieve the current LP solution value of variable"""
         return SCIPvarGetLPSol(self.scip_var)
 
+    def getRootSol(self):
+        """returns the solution of the variable in the last root node's relaxation
+        if the root relaxation is not yet completely solved, zero is returned.
+        """
+        return SCIPvarGetRootSol(self.scip_var)
+
     def getAvgSol(self):
         """Retrieve a weighted average solution value of the variable in all feasible primal solutions found so far"""
         return SCIPvarGetAvgSol(self.scip_var)
+
+    def getBranchDirection(self):
+        """gets the preferred branch direction of the variable (downwards: 0, upwards: 1, or auto: 3)"""
+        return SCIPvarGetBranchDirection(self.scip_var)
 
 cdef class Constraint:
     """Base class holding a pointer to corresponding SCIP_CONS"""
@@ -1841,6 +1851,25 @@ cdef class Model:
             var_dict[var.name] = self.getVal(var)
         return var_dict
 
+    def getVarPseudocost(self, Variable var, branchdir):
+        """gets the variable's pseudo cost value for the given direction
+        
+        :param var: Variable, the problem variable
+        :param branchdir: branching direction (downwards: 0 or upwards: 1)
+        """
+        return SCIPgetVarPseudocost(self._scip, var.scip_var, branchdir)
+
+    def getVarAvgInferences(self, Variable var, branchdir):
+        """returns the average number of inferences found after branching on the variable in given direction
+        
+        if branching on the variable in the given direction was not yet evaluated,
+        the average number of inferences over all variables for branching in the given direction is returned.
+
+        :param var: Variable, the problem variable
+        :param branchdir: branching direction (downwards: 0 or upwards: 1)
+        """
+        return SCIPgetVarAvgInferences(self._scip, var.scip_var, branchdir)
+
     def updateNodeLowerbound(self, Node node, lb):
         """if given value is larger than the node's lower bound (in transformed problem),
         sets the node's lower bound to the new value
@@ -1860,6 +1889,10 @@ cdef class Model:
             self.chgVarType(var, "C")
 
     # Node methods
+    def getRootNode(self):
+        """gets the root node of the tree"""
+        return Node.create(SCIPgetRootNode(self._scip))
+    
     def getPrioChild(self):
         """gets the best child of the focus node w.r.t. the node selection priority assigned by the branching rule"""
         return Node.create(SCIPgetPrioChild(self._scip))
@@ -4715,7 +4748,7 @@ cdef class Model:
         return SCIPgetSolTime(self._scip, sol.sol)
 
     def getObjVal(self, original=True):
-        """Retrieve the objective value of value of best solution.
+        """Retrieve the objective value of best solution.
         Can only be called after solving is completed.
 
         :param original: objective value in original space (Default value = True)
