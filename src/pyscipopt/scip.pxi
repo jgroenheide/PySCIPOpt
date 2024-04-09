@@ -6,6 +6,7 @@ from os.path import splitext
 import os
 import sys
 import warnings
+import locale
 
 cimport cython
 from cpython cimport Py_INCREF, Py_DECREF
@@ -35,7 +36,7 @@ include "relax.pxi"
 include "nodesel.pxi"
 
 # recommended SCIP version; major version is required
-MAJOR = 8
+MAJOR = 9
 MINOR = 0
 PATCH = 0
 
@@ -1014,10 +1015,10 @@ cdef class Constraint:
                 and self.scip_cons == (<Constraint>other).scip_cons)
 
 
-cdef void relayMessage(SCIP_MESSAGEHDLR *messagehdlr, FILE *file, const char *msg):
+cdef void relayMessage(SCIP_MESSAGEHDLR *messagehdlr, FILE *file, const char *msg) noexcept:
     sys.stdout.write(msg.decode('UTF-8'))
 
-cdef void relayErrorMessage(void *messagehdlr, FILE *file, const char *msg):
+cdef void relayErrorMessage(void *messagehdlr, FILE *file, const char *msg) noexcept:
     sys.stderr.write(msg.decode('UTF-8'))
 
 # - remove create(), includeDefaultPlugins(), createProbBasic() methods
@@ -1167,7 +1168,12 @@ cdef class Model:
 
     def printVersion(self):
         """Print version, copyright information and compile mode"""
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         SCIPprintVersion(self._scip, NULL)
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def getProbName(self):
         """Retrieve problem name"""
@@ -1376,24 +1382,25 @@ cdef class Model:
         """returns the Euclidean norm of the objective function vector (available only for transformed problem)"""
         return SCIPgetObjNorm(self._scip)
 
-    def setObjective(self, coeffs, sense = 'minimize', clear = 'true'):
+    def setObjective(self, expr, sense = 'minimize', clear = 'true'):
         """Establish the objective function as a linear expression.
 
-        :param coeffs: the coefficients
+        :param expr: the objective function SCIP Expr, or constant value
         :param sense: the objective sense (Default value = 'minimize')
         :param clear: set all other variables objective coefficient to zero (Default value = 'true')
-
         """
+ 
         cdef SCIP_VAR** _vars
         cdef int _nvars
 
         # turn the constant value into an Expr instance for further processing
-        if not isinstance(coeffs, Expr):
-            assert(_is_number(coeffs)), "given coefficients are neither Expr or number but %s" % coeffs.__class__.__name__
-            coeffs = Expr() + coeffs
+        if not isinstance(expr, Expr):
+            print(expr)
+            assert(_is_number(expr)), "given coefficients are neither Expr or number but %s" % expr.__class__.__name__
+            expr = Expr() + expr
 
-        if coeffs.degree() > 1:
-            raise ValueError("Nonlinear objective functions are not supported!")
+        if expr.degree() > 1:
+            raise ValueError("SCIP does not support nonlinear objective functions. Consider using set_nonlinear_objective in the pyscipopt.recipe.nonlinear")
         
         if clear:
             # clear existing objective function
@@ -1403,10 +1410,10 @@ cdef class Model:
             for i in range(_nvars):
                 PY_SCIP_CALL(SCIPchgVarObj(self._scip, _vars[i], 0.0))
 
-        if coeffs[CONST] != 0.0:
-            self.addObjoffset(coeffs[CONST])
+        if expr[CONST] != 0.0:
+            self.addObjoffset(expr[CONST])
 
-        for term, coef in coeffs.terms.items():
+        for term, coef in expr.terms.items():
             # avoid CONST term of Expr
             if term != CONST:
                 assert len(term) == 1
@@ -1522,6 +1529,9 @@ cdef class Model:
         :param genericnames: indicates whether the problem should be written with generic variable and constraint names (Default value = False)
 
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         str_absfile = abspath(filename)
         absfile = str_conversion(str_absfile)
         fn, ext = splitext(absfile)
@@ -1534,6 +1544,8 @@ cdef class Model:
         else:
             PY_SCIP_CALL(SCIPwriteOrigProblem(self._scip, fn, ext, genericnames))
         print('wrote problem to file ' + str_absfile)
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     # Variable Functions
 
@@ -2473,6 +2485,7 @@ cdef class Model:
         free(monomials)
         free(termcoefs)
         return PyCons
+    
 
     def _addGenNonlinearCons(self, ExprCons cons, **kwargs):
         cdef SCIP_EXPR** childrenexpr
@@ -2597,6 +2610,24 @@ cdef class Model:
 
         return PyCons
 
+    # TODO Find a better way to retrieve a scip expression from a python expression. Consider making GenExpr include Expr, to avoid using Union. See PR #760.
+    from typing import Union
+    def addExprNonlinear(self, Constraint cons, expr: Union[Expr,GenExpr], float coef):
+        """
+        Add coef*expr to nonlinear constraint.
+        """
+        assert self.getStage() == 1, "addExprNonlinear cannot be called in stage %i." % self.getStage()
+        assert cons.isNonlinear(), "addExprNonlinear can only be called with nonlinear constraints."
+
+        cdef Constraint temp_cons
+        cdef SCIP_EXPR* scip_expr 
+
+        temp_cons = self.addCons(expr <= 0)
+        scip_expr = SCIPgetExprNonlinear(temp_cons.scip_cons)
+
+        PY_SCIP_CALL(SCIPaddExprNonlinear(self._scip, cons.scip_cons, scip_expr, coef))
+        self.delCons(temp_cons)
+
     def addConsCoeff(self, Constraint cons, Variable var, coeff):
         """Add coefficient to the linear constraint (if non-zero).
 
@@ -2710,7 +2741,7 @@ cdef class Model:
                 PY_SCIP_CALL(SCIPaddVarSOS2(self._scip, scip_cons, var.scip_var, weights[i]))
 
         PY_SCIP_CALL(SCIPaddCons(self._scip, scip_cons))
-        return Constraint.create(scip_cons)
+        return Constraint.create(scip_cons)      
 
     def addConsAnd(self, vars, resvar, name="ANDcons",
             initial=True, separate=True, enforce=True, check=True,
@@ -2942,7 +2973,7 @@ cdef class Model:
         PY_SCIP_CALL(SCIPreleaseCons(self._scip, &scip_cons))
 
         return pyCons
-
+    
     def getSlackVarIndicator(self, Constraint cons):
         """Get slack variable of an indicator constraint.
 
@@ -3877,7 +3908,7 @@ cdef class Model:
                                               PyConsInitsol, PyConsExitsol, PyConsDelete, PyConsTrans, PyConsInitlp, PyConsSepalp, PyConsSepasol,
                                               PyConsEnfolp, PyConsEnforelax, PyConsEnfops, PyConsCheck, PyConsProp, PyConsPresol, PyConsResprop, PyConsLock,
                                               PyConsActive, PyConsDeactive, PyConsEnable, PyConsDisable, PyConsDelvars, PyConsPrint, PyConsCopy,
-                                              PyConsParse, PyConsGetvars, PyConsGetnvars, PyConsGetdivebdchgs,
+                                              PyConsParse, PyConsGetvars, PyConsGetnvars, PyConsGetdivebdchgs, PyConsGetPermSymGraph, PyConsGetSignedPermSymGraph,
                                               <SCIP_CONSHDLRDATA*>conshdlr))
         conshdlr.model = <Model>weakref.proxy(self)
         conshdlr.name = name
@@ -4470,8 +4501,13 @@ cdef class Model:
         """writes current LP to a file
         :param filename: file name (Default value = "LP.lp")
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         absfile = str_conversion(abspath(filename))
         PY_SCIP_CALL( SCIPwriteLP(self._scip, absfile) )
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def createSol(self, Heur heur = None):
         """Create a new primal solution.
@@ -4510,19 +4546,30 @@ cdef class Model:
 
     def printBestSol(self, write_zeros=False):
         """Prints the best feasible primal solution."""
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         PY_SCIP_CALL(SCIPprintBestSol(self._scip, NULL, write_zeros))
 
-    def printSol(self, Solution solution=None, write_zeros=False):
-      """Print the given primal solution.
+        locale.setlocale(locale.LC_ALL, user_locale)
 
-      Keyword arguments:
-      solution -- solution to print
-      write_zeros -- include variables that are set to zero
-      """
-      if solution is None:
-         PY_SCIP_CALL(SCIPprintSol(self._scip, NULL, NULL, write_zeros))
-      else:
-         PY_SCIP_CALL(SCIPprintSol(self._scip, solution.sol, NULL, write_zeros))
+    def printSol(self, Solution solution=None, write_zeros=False):
+        """Print the given primal solution.
+
+        Keyword arguments:
+        solution -- solution to print
+        write_zeros -- include variables that are set to zero
+        """
+
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
+        if solution is None:
+            PY_SCIP_CALL(SCIPprintSol(self._scip, NULL, NULL, write_zeros))
+        else:
+            PY_SCIP_CALL(SCIPprintSol(self._scip, solution.sol, NULL, write_zeros))
+        
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def writeBestSol(self, filename="origprob.sol", write_zeros=False):
         """Write the best feasible primal solution to a file.
@@ -4531,11 +4578,17 @@ cdef class Model:
         filename -- name of the output file
         write_zeros -- include variables that are set to zero
         """
+
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         # use this doubled opening pattern to ensure that IOErrors are
         #   triggered early and in Python not in C,Cython or SCIP.
         with open(filename, "w") as f:
             cfile = fdopen(f.fileno(), "w")
             PY_SCIP_CALL(SCIPprintBestSol(self._scip, cfile, write_zeros))
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def writeBestTransSol(self, filename="transprob.sol", write_zeros=False):
         """Write the best feasible primal solution for the transformed problem to a file.
@@ -4544,11 +4597,16 @@ cdef class Model:
         filename -- name of the output file
         write_zeros -- include variables that are set to zero
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         # use this double opening pattern to ensure that IOErrors are
         #   triggered early and in python not in C, Cython or SCIP.
         with open(filename, "w") as f:
             cfile = fdopen(f.fileno(), "w")
             PY_SCIP_CALL(SCIPprintBestTransSol(self._scip, cfile, write_zeros))
+        
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def writeSol(self, Solution solution, filename="origprob.sol", write_zeros=False):
         """Write the given primal solution to a file.
@@ -4558,11 +4616,16 @@ cdef class Model:
         filename -- name of the output file
         write_zeros -- include variables that are set to zero
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         # use this doubled opening pattern to ensure that IOErrors are
         #   triggered early and in Python not in C,Cython or SCIP.
         with open(filename, "w") as f:
             cfile = fdopen(f.fileno(), "w")
             PY_SCIP_CALL(SCIPprintSol(self._scip, solution.sol, cfile, write_zeros))
+        
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def writeTransSol(self, Solution solution, filename="transprob.sol", write_zeros=False):
         """Write the given transformed primal solution to a file.
@@ -4572,11 +4635,16 @@ cdef class Model:
         filename -- name of the output file
         write_zeros -- include variables that are set to zero
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         # use this doubled opening pattern to ensure that IOErrors are
         #   triggered early and in Python not in C,Cython or SCIP.
         with open(filename, "w") as f:
             cfile = fdopen(f.fileno(), "w")
             PY_SCIP_CALL(SCIPprintTransSol(self._scip, solution.sol, cfile, write_zeros))
+        
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     # perhaps this should not be included as it implements duplicated functionality
     #   (as does it's namesake in SCIP)
@@ -4846,7 +4914,12 @@ cdef class Model:
         :param Variable var: variable
 
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         PY_SCIP_CALL(SCIPwriteVarName(self._scip, NULL, var.scip_var, False))
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def getStage(self):
         """Retrieve current SCIP stage"""
@@ -4917,6 +4990,8 @@ cdef class Model:
             _eventhdlr = SCIPfindEventhdlr(self._scip, n)
         else:
             raise Warning("event handler not found")
+        
+        Py_INCREF(self)
         PY_SCIP_CALL(SCIPcatchEvent(self._scip, eventtype, _eventhdlr, NULL, NULL))
 
     def dropEvent(self, eventtype, Eventhdlr eventhdlr):
@@ -4927,6 +5002,8 @@ cdef class Model:
             _eventhdlr = SCIPfindEventhdlr(self._scip, n)
         else:
             raise Warning("event handler not found")
+        
+        Py_DECREF(self)
         PY_SCIP_CALL(SCIPdropEvent(self._scip, eventtype, _eventhdlr, NULL, -1))
 
     def catchVarEvent(self, Variable var, eventtype, Eventhdlr eventhdlr):
@@ -4973,19 +5050,29 @@ cdef class Model:
 
     def printStatistics(self):
         """Print statistics."""
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         PY_SCIP_CALL(SCIPprintStatistics(self._scip, NULL))
 
-    def writeStatistics(self, filename="origprob.stats"):
-      """Write statistics to a file.
+        locale.setlocale(locale.LC_ALL, user_locale)
 
-      Keyword arguments:
-      filename -- name of the output file
-      """
-      # use this doubled opening pattern to ensure that IOErrors are
-      #   triggered early and in Python not in C,Cython or SCIP.
-      with open(filename, "w") as f:
-          cfile = fdopen(f.fileno(), "w")
-          PY_SCIP_CALL(SCIPprintStatistics(self._scip, cfile))
+    def writeStatistics(self, filename="origprob.stats"):
+        """Write statistics to a file.
+
+        Keyword arguments:
+        filename -- name of the output file
+        """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
+        # use this doubled opening pattern to ensure that IOErrors are
+        #   triggered early and in Python not in C,Cython or SCIP.
+        with open(filename, "w") as f:
+            cfile = fdopen(f.fileno(), "w")
+            PY_SCIP_CALL(SCIPprintStatistics(self._scip, cfile))
+        
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def getNLPs(self):
         """gets total number of LPs solved so far"""
@@ -5016,8 +5103,11 @@ cdef class Model:
         """sets the log file name for the currently installed message handler
         :param path: name of log file, or None (no log)
         """
-        c_path = str_conversion(path) if path else None
-        SCIPsetMessagehdlrLogfile(self._scip, c_path)
+        if path:
+            c_path = str_conversion(path)
+            SCIPsetMessagehdlrLogfile(self._scip, c_path)
+        else:
+            SCIPsetMessagehdlrLogfile(self._scip, NULL)
 
     # Parameter Methods
 
@@ -5179,10 +5269,15 @@ cdef class Model:
         :param onlychanged: write only modified parameters (Default value = True)
 
         """
+        user_locale = locale.getlocale()
+        locale.setlocale(locale.LC_ALL, "C")
+
         str_absfile = abspath(filename)
         absfile = str_conversion(str_absfile)
         PY_SCIP_CALL(SCIPwriteParams(self._scip, absfile, comments, onlychanged))
         print('wrote parameter settings to file ' + str_absfile)
+
+        locale.setlocale(locale.LC_ALL, user_locale)
 
     def resetParam(self, name):
         """Reset parameter setting to its default value
@@ -5303,6 +5398,10 @@ cdef class Model:
         """
         assert isinstance(var, Variable), "The given variable is not a pyvar, but %s" % var.__class__.__name__
         PY_SCIP_CALL(SCIPchgVarBranchPriority(self._scip, var.scip_var, priority))
+
+    def getTreesizeEstimation(self):
+        """Get an estimation of the final tree size """
+        return SCIPgetTreesizeEstimation(self._scip)
 
 # debugging memory management
 def is_memory_freed():
